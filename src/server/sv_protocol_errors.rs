@@ -1,6 +1,7 @@
 use std::fmt;
+use std::error::Error;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ProtocolError {
     InvalidCommand,
     InvalidArgument,
@@ -20,3 +21,5 @@ impl fmt::Display for ProtocolError {
         }
     }
 }
+
+impl Error for ProtocolError {}

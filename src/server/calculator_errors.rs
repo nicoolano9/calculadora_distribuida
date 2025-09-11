@@ -1,4 +1,5 @@
 use std::fmt;
+use std::error::Error;
 
 #[derive(Debug)]    
 pub enum CalcError {
@@ -14,3 +15,5 @@ impl fmt::Display for CalcError {
         }
     }
 }
+
+impl Error for CalcError {}

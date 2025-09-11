@@ -1,8 +1,10 @@
 use std::error::Error;
-use std::io::{Read, BufRead, Write};
+use std::io::{BufReader, BufRead, Write};
 use std::net::{TcpListener, TcpStream};
 use crate::server::calculator::Calculator;
 use crate::server::sv_protocol::{Command};
+use crate::server::sv_protocol_errors::ProtocolError;
+use crate::server::calculator_errors::CalcError;
 use std::thread;
 use std::sync::{Arc, Mutex};
 
@@ -17,7 +19,7 @@ pub fn run(addr: &String) -> Result<(), Box<dyn Error>> {
 
 
         let handle = thread::spawn(move || {
-            match handle_client(stream, calc) {
+            match handle_connection(stream, calc) {
                 Ok(_) => {},
                 Err(e) => eprintln!("ERROR \"{}\"", e),
             }
@@ -32,51 +34,66 @@ pub fn run(addr: &String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn handle_client(mut stream: TcpStream, calc: Arc<Mutex<Calculator>>) -> Result<(), Box<dyn Error>> {
+fn handle_command(command_str: &str, calc: Arc<Mutex<Calculator>>, stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
+    let command = Command::parse(command_str)?;
+
+    let mut calculator = match calc.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    match command {
+        Command::Get => {
+            let value = calculator.value();
+            stream.write_all(format!("VALUE {}\n", value).as_bytes())?;
+            stream.flush()?;
+        },
+        Command::Op { operator, arg } => {
+            match calculator.apply(operator, arg) {
+                Ok(()) => stream.write_all(b"OK\n")?,
+                Err(e) => {
+                    let error_message = format!("ERROR {}\n", e);
+                    stream.write_all(error_message.as_bytes())?;
+                    stream.flush()?;
+                    return Err(Box::new(e));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_connection(mut stream: TcpStream, calc: Arc<Mutex<Calculator>>) -> Result<(), Box<dyn Error>> {
     let reader_stream = stream.try_clone()?;
-    let mut reader = std::io::BufReader::new(reader_stream);
+    let mut reader = BufReader::new(reader_stream);
     
     loop {
         let mut buffer = String::new();
-        let bytes_read = reader.read_line(&mut buffer)?;
         
-        // Check if the connection was closed
-        if bytes_read == 0 {
-            break;
-        }
-
-        let command = match Command::parse(&buffer.trim()) {
-            Ok(cmd) => cmd,
-            Err(e) => {
-                let error_response = format!("ERROR {}\n", e);
-                stream.write_all(error_response.as_bytes())?;
-                continue;
+        match reader.read_line(&mut buffer) {
+            Ok(0) => {
+                break;
             }
-        };
-        
-        let cmd_str = buffer.trim().to_string();
-
-        let mut calculator = match calc.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-
-        let response = {
-            match command {
-                Command::Get => {
-                    let value = calculator.value();
-                    format!("OK {}\n", value)
-                },
-                Command::Op { operator, arg } => {
-                    match calculator.apply(operator, arg) {
-                        Ok(()) => format!("OK\n"),
-                        Err(e) => format!("ERROR {}\n", e),
+            Ok(_) => {
+                if let Err(e) = handle_command(buffer.trim_end(), Arc::clone(&calc), &mut stream) {
+                    eprintln!("ERROR \"{}\"", e);
+                    // If the error is due to protocol or calculation, continue processing further commands
+                    // Otherwise, break the loop and close the connection
+                    if e.as_ref().downcast_ref::<ProtocolError>().is_some() {
+                        continue;
                     }
+                    if e.as_ref().downcast_ref::<CalcError>().is_some() {
+                        continue;
+                    }
+                    break;
                 }
             }
-        };
-
-        stream.write_all(response.as_bytes())?;
+            Err(e) => {
+                eprintln!("ERROR \"{}\"", e);
+                return Err(Box::new(e));
+            }
+        }
     }
 
     Ok(())

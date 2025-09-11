@@ -59,3 +59,59 @@ impl<'a> Command<'a> {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_get_ok() {
+        assert_eq!(Command::parse("GET"), Ok(Command::Get));
+    }
+
+    #[test]
+    fn parse_get_with_extra_parts_err() {
+        assert_eq!(Command::parse("GET extra"), Err(ProtocolError::InvalidCommand));
+    }
+
+    #[test]
+    fn parse_op_ok() {
+        assert_eq!(
+            Command::parse("OP + 10"),
+            Ok(Command::Op {
+                operator: "+",
+                arg: 10
+            })
+        );
+    }
+
+    #[test]
+    fn parse_op_invalid_operator_err() {
+        assert_eq!(Command::parse("OP ^ 1"), Err(ProtocolError::InvalidOperator));
+    }
+
+    #[test]
+    fn parse_op_invalid_operand_err() {
+        assert_eq!(Command::parse("OP + asd"), Err(ProtocolError::InvalidArgument));
+    }
+
+    #[test]
+    fn parse_op_missing_arguments_err() {
+        assert_eq!(Command::parse("OP"), Err(ProtocolError::MissingArgument));
+        assert_eq!(Command::parse("OP +"), Err(ProtocolError::MissingArgument));
+    }
+
+    #[test]
+    fn parse_op_extra_arguments_err() {
+        assert_eq!(
+            Command::parse("OP * 2 extra"),
+            Err(ProtocolError::InvalidCommand)
+        );
+    }
+
+    #[test]
+    fn parse_empty_err() {
+        assert_eq!(Command::parse("   "), Err(ProtocolError::Empty));
+        assert_eq!(Command::parse(""), Err(ProtocolError::Empty));
+    }
+}

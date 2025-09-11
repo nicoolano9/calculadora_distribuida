@@ -1,8 +1,3 @@
-use std::f32::consts::E;
-use std::io;
-use std::net::{TcpListener, TcpStream};
-use std::thread;
-use std::sync::{Arc, Mutex};
 use calculadora_distribuida::server;
 
 fn main() {
@@ -11,4 +6,5 @@ fn main() {
     if let Err(e) = server::logic::run(&addr) {
         eprintln!("ERROR \"{}\"", e);
     }
+
 }
