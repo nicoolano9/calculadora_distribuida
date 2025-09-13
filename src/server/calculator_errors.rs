@@ -1,7 +1,7 @@
-use std::fmt;
 use std::error::Error;
+use std::fmt;
 
-#[derive(Debug)]    
+#[derive(Debug)]
 pub enum CalcError {
     DivisionByZero,
     UnknownOperator,
@@ -10,8 +10,8 @@ pub enum CalcError {
 impl fmt::Display for CalcError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::DivisionByZero => write!(f, "Division by zero"),
-            Self::UnknownOperator => write!(f, "Unknown operator"),
+            Self::DivisionByZero => write!(f, "division by zero"),
+            Self::UnknownOperator => write!(f, "parsing error: unknown operator"),
         }
     }
 }

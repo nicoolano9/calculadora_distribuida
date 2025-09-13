@@ -1,1 +1,2 @@
-// src/client/mod.rs
+pub mod logic;
+pub mod client_errors;

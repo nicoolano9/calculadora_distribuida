@@ -1,14 +1,17 @@
-use std::error::Error;
-use std::io::{BufReader, BufRead, Write};
-use std::net::{TcpListener, TcpStream};
 use crate::server::calculator::Calculator;
-use crate::server::sv_protocol::{Command};
-use crate::server::sv_protocol_errors::ProtocolError;
-use crate::server::calculator_errors::CalcError;
-use std::thread;
+use crate::server::sv_protocol::Command;
+use std::error::Error;
+use std::io::{BufRead, BufReader, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
+use std::thread;
 
-pub fn run(addr: &String) -> Result<(), Box<dyn Error>> {
+pub fn parse_ip_port(addr: &str) -> Result<SocketAddr, Box<dyn Error>> {
+    let socket_addr: SocketAddr = addr.parse()?;
+    Ok(socket_addr)
+}
+
+pub fn run(addr: &SocketAddr) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(addr)?;
     let calc = Arc::new(Mutex::new(Calculator::new()));
     let mut handles = Vec::new();
@@ -17,12 +20,9 @@ pub fn run(addr: &String) -> Result<(), Box<dyn Error>> {
         let stream = stream?;
         let calc = Arc::clone(&calc);
 
-
-        let handle = thread::spawn(move || {
-            match handle_connection(stream, calc) {
-                Ok(_) => {},
-                Err(e) => eprintln!("ERROR \"{}\"", e),
-            }
+        let handle = thread::spawn(move || match handle_connection(stream, calc) {
+            Ok(_) => {}
+            Err(e) => eprintln!("ERROR \"{}\"", e),
         });
         handles.push(handle);
     }
@@ -34,8 +34,21 @@ pub fn run(addr: &String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn handle_command(command_str: &str, calc: Arc<Mutex<Calculator>>, stream: &mut TcpStream) -> Result<(), Box<dyn Error>> {
-    let command = Command::parse(command_str)?;
+fn handle_command(
+    command_str: &str,
+    calc: Arc<Mutex<Calculator>>,
+    stream: &mut TcpStream,
+) -> Result<(), Box<dyn Error>> {
+    let command = match Command::parse(command_str) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            let error_message = format!("ERROR \"{}\"\n", e);
+            stream.write_all(error_message.as_bytes())?;
+            stream.flush()?;
+            // Protocol error is recoverable - do not terminate connection
+            return Ok(());
+        }
+    };
 
     let mut calculator = match calc.lock() {
         Ok(guard) => guard,
@@ -47,30 +60,32 @@ fn handle_command(command_str: &str, calc: Arc<Mutex<Calculator>>, stream: &mut 
             let value = calculator.value();
             stream.write_all(format!("VALUE {}\n", value).as_bytes())?;
             stream.flush()?;
-        },
-        Command::Op { operator, arg } => {
-            match calculator.apply(operator, arg) {
-                Ok(()) => stream.write_all(b"OK\n")?,
-                Err(e) => {
-                    let error_message = format!("ERROR {}\n", e);
-                    stream.write_all(error_message.as_bytes())?;
-                    stream.flush()?;
-                    return Err(Box::new(e));
-                }
-            }
         }
+        Command::Op { operator, arg } => match calculator.apply(operator, arg) {
+            Ok(()) => stream.write_all(b"OK\n")?,
+            Err(e) => {
+                let error_message = format!("ERROR \"{}\"\n", e);
+                stream.write_all(error_message.as_bytes())?;
+                stream.flush()?;
+                // CalcError is recoverable - do not terminate connection
+                return Ok(());
+            }
+        },
     }
 
     Ok(())
 }
 
-fn handle_connection(mut stream: TcpStream, calc: Arc<Mutex<Calculator>>) -> Result<(), Box<dyn Error>> {
+fn handle_connection(
+    mut stream: TcpStream,
+    calc: Arc<Mutex<Calculator>>,
+) -> Result<(), Box<dyn Error>> {
     let reader_stream = stream.try_clone()?;
     let mut reader = BufReader::new(reader_stream);
-    
+
     loop {
         let mut buffer = String::new();
-        
+
         match reader.read_line(&mut buffer) {
             Ok(0) => {
                 break;
@@ -78,14 +93,6 @@ fn handle_connection(mut stream: TcpStream, calc: Arc<Mutex<Calculator>>) -> Res
             Ok(_) => {
                 if let Err(e) = handle_command(buffer.trim_end(), Arc::clone(&calc), &mut stream) {
                     eprintln!("ERROR \"{}\"", e);
-                    // If the error is due to protocol or calculation, continue processing further commands
-                    // Otherwise, break the loop and close the connection
-                    if e.as_ref().downcast_ref::<ProtocolError>().is_some() {
-                        continue;
-                    }
-                    if e.as_ref().downcast_ref::<CalcError>().is_some() {
-                        continue;
-                    }
                     break;
                 }
             }
@@ -97,4 +104,24 @@ fn handle_connection(mut stream: TcpStream, calc: Arc<Mutex<Calculator>>) -> Res
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn test_parse_ip_port_valid_ipv4() {
+        let addr = "127.0.0.1:8080";
+        let sa = parse_ip_port(addr).expect("should parse valid IPv4 socket address");
+        assert_eq!(sa, SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080));
+    }
+
+
+    #[test]
+    fn test_parse_ip_port_invalid() {
+        let addr = "not an addr";
+        assert!(parse_ip_port(addr).is_err(), "invalid address should return an error");
+    }
 }

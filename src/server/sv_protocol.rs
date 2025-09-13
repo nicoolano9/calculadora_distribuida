@@ -3,10 +3,7 @@ use crate::server::sv_protocol_errors::ProtocolError;
 /// Protocolo del servidor
 #[derive(Debug, PartialEq)]
 pub enum Command<'a> {
-    Op {
-        operator: &'a str,
-        arg: u8,
-    },
+    Op { operator: &'a str, arg: u8 },
     Get,
 }
 
@@ -40,7 +37,7 @@ impl<'a> Command<'a> {
                     Ok(num) => num,
                     Err(_) => return Err(ProtocolError::InvalidArgument),
                 };
-                
+
                 Ok(Command::Op {
                     operator: operator_string,
                     arg: operand,
@@ -54,11 +51,13 @@ impl<'a> Command<'a> {
                 Ok(Command::Get)
             }
 
+            // Any other valid command is unexpected
+            "OK" | "ERROR" | "VALUE" => Err(ProtocolError::UnexpectedMessage(command.to_string())),
+
             _ => Err(ProtocolError::InvalidCommand),
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -71,7 +70,10 @@ mod tests {
 
     #[test]
     fn parse_get_with_extra_parts_err() {
-        assert_eq!(Command::parse("GET extra"), Err(ProtocolError::InvalidCommand));
+        assert_eq!(
+            Command::parse("GET extra"),
+            Err(ProtocolError::InvalidCommand)
+        );
     }
 
     #[test]
@@ -87,12 +89,18 @@ mod tests {
 
     #[test]
     fn parse_op_invalid_operator_err() {
-        assert_eq!(Command::parse("OP ^ 1"), Err(ProtocolError::InvalidOperator));
+        assert_eq!(
+            Command::parse("OP ^ 1"),
+            Err(ProtocolError::InvalidOperator)
+        );
     }
 
     #[test]
     fn parse_op_invalid_operand_err() {
-        assert_eq!(Command::parse("OP + asd"), Err(ProtocolError::InvalidArgument));
+        assert_eq!(
+            Command::parse("OP + asd"),
+            Err(ProtocolError::InvalidArgument)
+        );
     }
 
     #[test]
@@ -113,5 +121,21 @@ mod tests {
     fn parse_empty_err() {
         assert_eq!(Command::parse("   "), Err(ProtocolError::Empty));
         assert_eq!(Command::parse(""), Err(ProtocolError::Empty));
+    }
+
+    #[test]
+    fn parse_unexpected_message_err() {
+        assert_eq!(
+            Command::parse("OK"),
+            Err(ProtocolError::UnexpectedMessage("OK".to_string()))
+        );
+        assert_eq!(
+            Command::parse("ERROR \"test\""),
+            Err(ProtocolError::UnexpectedMessage("ERROR".to_string()))
+        );
+        assert_eq!(
+            Command::parse("VALUE 42"),
+            Err(ProtocolError::UnexpectedMessage("VALUE".to_string()))
+        );
     }
 }
